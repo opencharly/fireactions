@@ -1,11 +1,71 @@
 version: "2"
 
 linters:
-  # `standard` is the set this tree actually passes (0 issues — measured 2026-10-14 with
-  # golangci-lint v2.14.0). The previous `all` was not satisfiable here: with every linter
-  # enabled the same run reports 553 findings across the EXISTING code, so the declared gate
-  # was permanently red and no pull request could go green. Re-enable linters one at a time
-  # in this block as their findings are fixed — the point of a gate is that it can pass.
-  default: standard
+  # The declared gate stays `all`: every linter this tree satisfies keeps running, including
+  # the security linters that pass. The entries disabled below are exactly what the existing
+  # code does not satisfy yet, in two measured groups:
+  #
+  #  * 47 linters / 871 findings, counted per linter in ONE uncapped run
+  #    (`max-issues-per-linter: 0`, so the tool's default 50/3 caps hide nothing);
+  #  * 4 linters / 55 further findings (exhaustruct_v5, godoclint, predeclared, unparam),
+  #    which golangci-lint only activates once their overlapping counterpart is disabled.
+  #
+  # Measured 2026-10-14 with golangci-lint v2.14.0, and tracked in ONE place:
+  #   https://github.com/opencharly/fireactions/issues/3
+  # so the debt is recorded rather than hidden, and paying it down is deleting a line here.
+  # Nothing is disabled that the tree already passes; `errcheck` was disabled before this
+  # change and is left as it was.
+  default: all
   disable:
-    - errcheck
+    - canonicalheader             # 1
+    - containedctx                # 3
+    - contextcheck                # 3
+    - cyclop                      # 6
+    - depguard                    # 114
+    - dupl                        # 4
+    - embeddedstructfieldcheck    # 2
+    - err113                      # 18
+    - errcheck                    # pre-existing: disabled before this change, left as it was
+    - errorlint                   # 2
+    - exhaustruct                 # 76
+    - exhaustruct_v5              # 50 (activated when its overlapping counterpart is disabled)
+    - forbidigo                   # 5
+    - forcetypeassert             # 8
+    - funcorder                   # 8
+    - funlen                      # 3
+    - gochecknoglobals            # 4
+    - gochecknoinits              # 3
+    - gocognit                    # 1
+    - goconst                     # 17
+    - gocritic                    # 5
+    - godoclint                   # 2 (activated when its overlapping counterpart is disabled)
+    - godot                       # 14
+    - godox                       # 2
+    - gomoddirectives             # 2
+    - gosec                       # 28
+    - intrange                    # 1
+    - ireturn                     # 4
+    - lll                         # 11
+    - mnd                         # 32
+    - modernize                   # 25
+    - nlreturn                    # 66
+    - noctx                       # 3
+    - noinlineerr                 # 34
+    - paralleltest                # 37
+    - perfsprint                  # 12
+    - prealloc                    # 2
+    - predeclared                 # 2 (activated when its overlapping counterpart is disabled)
+    - promlinter                  # 1
+    - protogetter                 # 41
+    - revive                      # 50
+    - tagalign                    # 27
+    - tagliatelle                 # 10
+    - testifylint                 # 12
+    - testpackage                 # 16
+    - unconvert                   # 1
+    - unparam                     # 1 (activated when its overlapping counterpart is disabled)
+    - usetesting                  # 1
+    - varnamelen                  # 14
+    - wrapcheck                   # 29
+    - wsl                         # 80
+    - wsl_v5                      # 33
