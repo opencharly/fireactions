@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/containerd/containerd"
+	"github.com/containerd/errdefs"
 	"github.com/hostinger/fireactions"
 	"github.com/hostinger/fireactions/helper/github"
 	serverv1 "github.com/hostinger/fireactions/proto/server/v1"
@@ -70,6 +71,18 @@ func New(config *Config, opts ...Opt) (*Server, error) {
 		return nil, fmt.Errorf("containerd: creating client: %w", err)
 	}
 
+	// Fail fast when containerd does not serve the configured snapshotter. Without this the
+	// first machine create fails deep inside the pool's reconcile loop, so a host whose
+	// snapshotter is compiled in but left unconfigured (containerd's `skip` state) reads as
+	// a transient provisioning error instead of a configuration defect.
+	probeCtx, cancelProbe := context.WithTimeout(context.Background(), snapshotterProbeTimeout)
+	defer cancelProbe()
+
+	err = verifySnapshotterServed(probeCtx, containerdClient, config.Containerd.Snapshotter)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create gRPC server with interceptors
 	grpcServer := grpc.NewServer(
 	// TODO: Add auth interceptor for BasicAuth if config.BasicAuthEnabled
@@ -96,7 +109,7 @@ func New(config *Config, opts ...Opt) (*Server, error) {
 		opt(s)
 	}
 
-	s.imageManager = newImageManager(s.logger, containerdClient)
+	s.imageManager = newImageManager(s.logger, containerdClient, config.Containerd.Snapshotter)
 
 	// Register gRPC service
 	serverv1.RegisterServerServiceServer(grpcServer, s)
@@ -134,7 +147,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	for _, poolConfig := range s.config.Pools {
-		pool, err := NewPool(s.logger, poolConfig, s.github, s.imageManager, s.containerd, &s.nextCID)
+		pool, err := NewPool(s.logger, poolConfig, s.github, s.imageManager, s.containerd, s.config.Containerd.Snapshotter, &s.nextCID)
 		if err != nil {
 			return fmt.Errorf("creating pool: %w", err)
 		}
@@ -216,4 +229,24 @@ func (s *Server) findMachine(id string) (*Machine, error) {
 	}
 
 	return nil, fmt.Errorf("machine not found: %s", id)
+}
+
+// snapshotterProbeTimeout bounds the startup probe of the configured containerd snapshotter.
+const snapshotterProbeTimeout = 5 * time.Second
+
+// snapshotterProbeKey is the key the startup probe looks up. A Stat for an absent key is a
+// read-only probe: it creates nothing and answers not-found when the snapshotter is served.
+const snapshotterProbeKey = "fireactions-snapshotter-probe"
+
+// verifySnapshotterServed proves that containerd actually serves the configured
+// snapshotter. containerd answers a request for a snapshotter it has not loaded with
+// "snapshotter not loaded: <name>", which is turned into an error naming the configured
+// value here instead of surfacing later as a machine-create failure.
+func verifySnapshotterServed(ctx context.Context, client *containerd.Client, name string) error {
+	_, err := client.SnapshotService(name).Stat(ctx, snapshotterProbeKey)
+	if err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("containerd: snapshotter %q is not served by this containerd: %w", name, err)
+	}
+
+	return nil
 }

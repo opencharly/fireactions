@@ -28,14 +28,11 @@ import (
 	githubv63 "github.com/google/go-github/v63/github"
 )
 
-const (
-	defaultSnapshotter = "devmapper"
-)
-
 // Pool represents a pool of Firecracker VMs that are used to run GitHub Actions jobs.
 type Pool struct {
 	config         *PoolConfig
 	containerd     *containerd.Client
+	snapshotter    string
 	github         *github.Client
 	imageManager   *imageManager
 	pendingCreates atomic.Int32
@@ -81,7 +78,7 @@ func (p *PoolConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 // NewPool creates a new Pool.
-func NewPool(logger *zerolog.Logger, config *PoolConfig, github *github.Client, imageManager *imageManager, containerdClient *containerd.Client, nextCID *atomic.Uint32) (*Pool, error) {
+func NewPool(logger *zerolog.Logger, config *PoolConfig, github *github.Client, imageManager *imageManager, containerdClient *containerd.Client, snapshotter string, nextCID *atomic.Uint32) (*Pool, error) {
 	l := logger.With().Str("pool", config.Name).Logger()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -93,6 +90,7 @@ func NewPool(logger *zerolog.Logger, config *PoolConfig, github *github.Client, 
 		machines:     make(map[string]*Machine),
 		isActive:     true,
 		containerd:   containerdClient,
+		snapshotter:  snapshotter,
 		github:       github,
 		imageManager: imageManager,
 		logger:       &l,
@@ -643,7 +641,7 @@ func (p *Pool) deleteMachine(_ context.Context) error {
 
 // createSnapshot creates a snapshot of the specified image.
 func (p *Pool) createSnapshot(ctx context.Context, image containerd.Image, snapshotID string) ([]mount.Mount, error) {
-	snapshotService := p.containerd.SnapshotService(defaultSnapshotter)
+	snapshotService := p.containerd.SnapshotService(p.snapshotter)
 	snapshotExists := true
 	_, err := snapshotService.Stat(ctx, snapshotID)
 	if err != nil {
@@ -669,6 +667,23 @@ func (p *Pool) createSnapshot(ctx context.Context, image containerd.Image, snaps
 	mounts, err := snapshotService.Mounts(ctx, snapshotID)
 	if err != nil {
 		return nil, fmt.Errorf("mounts: %w", err)
+	}
+
+	if len(mounts) == 0 {
+		return nil, fmt.Errorf("snapshot %s: snapshotter %q returned no mounts", snapshotID, p.snapshotter)
+	}
+
+	// Firecracker attaches a block device or a file as the guest root drive, so the mount
+	// must resolve to one. A snapshotter configured to return a directory (overlayfs,
+	// native) is refused here rather than booting a microVM with an unusable root drive.
+	mountInfo, statErr := os.Stat(mounts[0].Source)
+	if statErr != nil {
+		return nil, fmt.Errorf("snapshot %s: stat mount %q: %w", snapshotID, mounts[0].Source, statErr)
+	}
+
+	if mountInfo.IsDir() {
+		return nil, fmt.Errorf("snapshot %s: snapshotter %q mounts the directory %q, which cannot back a microVM root drive",
+			snapshotID, p.snapshotter, mounts[0].Source)
 	}
 
 	return mounts, nil
