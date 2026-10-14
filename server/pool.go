@@ -669,24 +669,35 @@ func (p *Pool) createSnapshot(ctx context.Context, image containerd.Image, snaps
 		return nil, fmt.Errorf("mounts: %w", err)
 	}
 
-	if len(mounts) == 0 {
-		return nil, fmt.Errorf("snapshot %s: snapshotter %q returned no mounts", snapshotID, p.snapshotter)
-	}
-
-	// Firecracker attaches a block device or a file as the guest root drive, so the mount
-	// must resolve to one. A snapshotter configured to return a directory (overlayfs,
-	// native) is refused here rather than booting a microVM with an unusable root drive.
-	mountInfo, statErr := os.Stat(mounts[0].Source)
-	if statErr != nil {
-		return nil, fmt.Errorf("snapshot %s: stat mount %q: %w", snapshotID, mounts[0].Source, statErr)
-	}
-
-	if mountInfo.IsDir() {
-		return nil, fmt.Errorf("snapshot %s: snapshotter %q mounts the directory %q, which cannot back a microVM root drive",
-			snapshotID, p.snapshotter, mounts[0].Source)
+	err = validateRootDriveMounts(p.snapshotter, snapshotID, mounts)
+	if err != nil {
+		return nil, err
 	}
 
 	return mounts, nil
+}
+
+// validateRootDriveMounts refuses a snapshot mount that cannot back a microVM root drive.
+//
+// Firecracker attaches a block device or a file as the guest's root drive, so a snapshotter
+// whose snapshot mount is a directory (overlayfs, native) can never work; a mount that has
+// gone away is reported by path rather than booting a guest with an unusable root drive.
+func validateRootDriveMounts(snapshotter, snapshotID string, mounts []mount.Mount) error {
+	if len(mounts) == 0 {
+		return fmt.Errorf("snapshot %s: snapshotter %q returned no mounts", snapshotID, snapshotter)
+	}
+
+	mountInfo, err := os.Stat(mounts[0].Source)
+	if err != nil {
+		return fmt.Errorf("snapshot %s: stat mount %q: %w", snapshotID, mounts[0].Source, err)
+	}
+
+	if mountInfo.IsDir() {
+		return fmt.Errorf("snapshot %s: snapshotter %q mounts the directory %q, which cannot back a microVM root drive",
+			snapshotID, snapshotter, mounts[0].Source)
+	}
+
+	return nil
 }
 
 // deleteGitHubRunner removes a runner from GitHub Actions
