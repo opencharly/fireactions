@@ -24,9 +24,35 @@ type Config struct {
 	path string
 }
 
+// Snapshotter names that can back a microVM root drive. Firecracker attaches a *block
+// device or a file* as the guest's root drive, so only snapshotters whose snapshot mount
+// resolves to one of those are usable here: devmapper yields a device-mapper block device,
+// blockfile yields the backing file. A snapshotter whose mount is a directory (overlayfs,
+// native) cannot back a root drive and is refused at config load with the reason, instead
+// of failing later inside the pool's reconcile loop.
+const (
+	// SnapshotterDevmapper is containerd's device-mapper snapshotter. It requires an LVM
+	// thin pool on a dedicated block device, and is the default for compatibility with
+	// existing deployments.
+	SnapshotterDevmapper = "devmapper"
+
+	// SnapshotterBlockfile is containerd's file-backed snapshotter. It needs no LVM and no
+	// spare block device, which makes a Firecracker pool possible on a host whose only
+	// storage is the root filesystem.
+	SnapshotterBlockfile = "blockfile"
+)
+
+// SnapshotterBacksRootDrive reports whether a containerd snapshotter's mount can be
+// attached to a microVM as its root drive.
+func SnapshotterBacksRootDrive(name string) bool {
+	return name == SnapshotterDevmapper || name == SnapshotterBlockfile
+}
+
+// ContainerdConfig is the containerd connection and storage configuration.
 type ContainerdConfig struct {
-	Address   string `yaml:"address" validate:"required"`
-	Namespace string `yaml:"namespace" validate:"required"`
+	Address     string `yaml:"address" validate:"required"`
+	Namespace   string `yaml:"namespace" validate:"required"`
+	Snapshotter string `yaml:"snapshotter" validate:"required"`
 }
 
 type MetricsConfig struct {
@@ -121,7 +147,7 @@ func (c *FirecrackerTokenBucketConfig) toSDK() *models.TokenBucket {
 func DefaultConfig() *Config {
 	c := &Config{
 		BindAddress:      ":8080",
-		Containerd:       &ContainerdConfig{Address: "/run/containerd/containerd.sock", Namespace: "fireactions"},
+		Containerd:       &ContainerdConfig{Address: "/run/containerd/containerd.sock", Namespace: "fireactions", Snapshotter: SnapshotterDevmapper},
 		Metrics:          &MetricsConfig{Enabled: true, Address: ":8081"},
 		BasicAuthEnabled: false,
 		BasicAuthUsers:   map[string]string{},
@@ -167,5 +193,18 @@ func (c *Config) Load() error {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	return validator.New().Struct(c)
+	err := validator.New().Struct(c)
+	if err != nil {
+		return err
+	}
+
+	if !SnapshotterBacksRootDrive(c.Containerd.Snapshotter) {
+		return fmt.Errorf("containerd.snapshotter %q cannot back a microVM root drive: "+
+			"Firecracker attaches a block device or a file as the guest root drive, so use %q "+
+			"(device-mapper, needs an LVM thin pool on a dedicated block device) or %q "+
+			"(file-backed, needs no LVM and no spare block device)",
+			c.Containerd.Snapshotter, SnapshotterDevmapper, SnapshotterBlockfile)
+	}
+
+	return nil
 }

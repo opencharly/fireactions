@@ -1,0 +1,33 @@
+---
+bind_address: 0.0.0.0:8080
+
+containerd:
+  address: /run/containerd/containerd.sock
+  namespace: fireactions
+  snapshotter: blockfile
+
+github:
+  app_private_key: |
+    -----BEGIN RSA PRIVATE KEY-----
+  app_id: 12345
+
+pools:
+- name: fireactions-blockfile
+  replicas: 1
+  runner:
+    name: fireactions-blockfile
+    image: ghcr.io/hostinger/fireactions-images/ubuntu24.04:latest
+    image_pull_policy: IfNotPresent
+    group_id: 1
+    organization: hostinger
+    labels:
+    - self-hosted
+  firecracker:
+    binary_path: firecracker
+    kernel_image_path: /var/lib/fireactions/vmlinux
+    kernel_args: "console=ttyS0 noapic reboot=k panic=1 pci=off nomodules rw"
+    machine_config:
+      mem_size_mib: 2048
+      vcpu_count: 2
+
+log_level: debug

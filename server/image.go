@@ -16,16 +16,20 @@ import (
 // imageManager manages container images.
 // Containerd client is thread-safe and handles concurrent operations internally.
 type imageManager struct {
-	containerd *containerd.Client
-	logger     *zerolog.Logger
-	pullGroup  singleflight.Group
+	containerd  *containerd.Client
+	logger      *zerolog.Logger
+	pullGroup   singleflight.Group
+	snapshotter string
 }
 
-// newImageManager creates a new imageManager.
-func newImageManager(logger *zerolog.Logger, containerdClient *containerd.Client) *imageManager {
+// newImageManager creates a new imageManager. The snapshotter must be the one the pool
+// prepares the microVM root drive from (see Pool.createSnapshot): an image pulled into a
+// different snapshotter cannot be prepared as a snapshot, so the two share one value.
+func newImageManager(logger *zerolog.Logger, containerdClient *containerd.Client, snapshotter string) *imageManager {
 	iM := &imageManager{
-		containerd: containerdClient,
-		logger:     logger,
+		containerd:  containerdClient,
+		logger:      logger,
+		snapshotter: snapshotter,
 	}
 
 	return iM
@@ -92,7 +96,7 @@ func (im *imageManager) pullImage(ctx context.Context, ref string, isAlways bool
 		image, err := im.containerd.Pull(ctx, ref,
 			containerd.WithPullUnpack,
 			containerd.WithResolver(resolver),
-			containerd.WithPullSnapshotter(defaultSnapshotter))
+			containerd.WithPullSnapshotter(im.snapshotter))
 		if err != nil {
 			im.logger.Error().Err(err).Str("image", ref).Msg("Failed to pull image")
 			return nil, err

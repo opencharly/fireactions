@@ -17,6 +17,7 @@ linters:
   # change and is left as it was.
   default: all
   disable:
+    - gomodguard                  # deprecated in v2.12.0; its replacement gomodguard_v2 stays enabled
     - canonicalheader             # 1
     - containedctx                # 3
     - contextcheck                # 3

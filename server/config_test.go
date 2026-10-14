@@ -5,6 +5,7 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -92,4 +93,43 @@ func TestFirecrackerRateLimiterConfigToSDK(t *testing.T) {
 			OneTimeBurst: firecracker.Int64(262144000),
 		},
 	}, rateLimiter.toSDK())
+}
+
+func TestNewConfigSnapshotterDefaultsToDevmapper(t *testing.T) {
+	// A config that names no snapshotter keeps the previous behaviour: devmapper.
+	config, err := NewConfig("testdata/config1.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, SnapshotterDevmapper, config.Containerd.Snapshotter)
+}
+
+func TestNewConfigSnapshotterBlockfile(t *testing.T) {
+	// blockfile needs no LVM thin pool, so it is a valid root-drive snapshotter.
+	config, err := NewConfig("testdata/config4.yaml")
+	assert.NoError(t, err)
+	assert.Equal(t, SnapshotterBlockfile, config.Containerd.Snapshotter)
+}
+
+func TestNewConfigSnapshotterCannotBackRootDrive(t *testing.T) {
+	// overlayfs mounts a directory, which Firecracker cannot attach as a root drive. The
+	// error must name the configured value AND the two usable alternatives.
+	_, err := NewConfig("testdata/config5.yaml")
+	assert.ErrorContains(t, err, `containerd.snapshotter "overlayfs" cannot back a microVM root drive`)
+	assert.ErrorContains(t, err, SnapshotterDevmapper)
+	assert.ErrorContains(t, err, SnapshotterBlockfile)
+}
+
+func TestSnapshotterBacksRootDrive(t *testing.T) {
+	assert.True(t, SnapshotterBacksRootDrive(SnapshotterDevmapper))
+	assert.True(t, SnapshotterBacksRootDrive(SnapshotterBlockfile))
+	assert.False(t, SnapshotterBacksRootDrive("overlayfs"))
+	assert.False(t, SnapshotterBacksRootDrive("native"))
+	assert.False(t, SnapshotterBacksRootDrive(""))
+}
+
+func TestNewImageManagerCarriesSnapshotter(t *testing.T) {
+	// The image pull and the root-drive snapshot must use one snapshotter; this is the
+	// wiring that keeps them equal.
+	logger := zerolog.Nop()
+	manager := newImageManager(&logger, nil, SnapshotterBlockfile)
+	assert.Equal(t, SnapshotterBlockfile, manager.snapshotter)
 }
