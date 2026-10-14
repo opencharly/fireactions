@@ -19,9 +19,15 @@ jobs:
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: 1.25.6
+        # The module requires go 1.26.0; pinning the job below that makes every tool in the
+        # job fetch a second toolchain. Keep the job at or above the module's version.
+        go-version: '1.27.x'
 
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.8.0
+        # v2.8.0 is built with Go 1.25.5 and REFUSES to load a config for a module that
+        # requires go 1.26.0 ("can't load config: the Go language version (go1.25) used to
+        # build golangci-lint is lower than the targeted Go version (1.26.0)"), so the lint
+        # job failed before it linted anything. v2.14.0 is built with Go 1.27.0.
+        version: v2.14.0
